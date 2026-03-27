@@ -2,7 +2,19 @@
    CONSTANTES
 ---------------------------------------------------------- */
 
-const PROXY = "https://eblg-proxy.onrender.com/proxy?url=";
+const PROXY = "https://eblg-proxy.onrender.com";
+
+async function loadMetar() {
+    try {
+        const res = await fetch(`${PROXY}/metar`);
+        const data = await res.json();
+        updateMetarUI(data);
+    } catch (err) {
+        console.error("Erreur METAR :", err);
+        showMetarFallback();
+    }
+}
+
 
 // METAR via proxy (clé AVWX cachée côté Render)
 const METAR_URL = "https://eblg-proxy.onrender.com/metar";
