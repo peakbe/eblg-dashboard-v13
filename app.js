@@ -359,6 +359,16 @@ function initMapButtons() {
   });
 }
 
+function updateMetarUI(data) {
+    if (data.fallback) {
+        document.getElementById("metar").innerText =
+            "METAR indisponible (fallback activé)";
+        return;
+    }
+
+    document.getElementById("metar").innerText = data.raw;
+}
+
 /* ----------------------------------------------------------
    REFRESH GLOBAL
 ---------------------------------------------------------- */
