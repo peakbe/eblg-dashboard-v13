@@ -31,8 +31,11 @@ const SONOS = [
   { id:"F012", lat:50.621917, lon:5.254747 }
 ];
 
-let sonometers = {}; // {id, lat, lon, marker, status}
-let map;             // carte Leaflet
+let sonometers = {};   // {id, lat, lon, marker, status}
+let map;               // Leaflet map
+let runwayLayer = null;
+let corridorLayer = null;
+let corridorArrows = null;
 
 // ======================================================
 // FETCH HELPER
@@ -74,6 +77,187 @@ function updateStatusPanel(service, data) {
 }
 
 // ======================================================
+// RUNWAY / CROSSWIND / CORRIDORS
+// ======================================================
+
+const RUNWAYS = {
+    "04": {
+        start: [50.645900, 5.443300],
+        end:   [50.637300, 5.463500],
+        color: "blue",
+        heading: 70
+    },
+    "22": {
+        start: [50.637300, 5.463500],
+        end:   [50.645900, 5.443300],
+        color: "red",
+        heading: 250
+    }
+};
+
+const CORRIDORS = {
+    "04": [
+        [50.700000, 5.300000],
+        [50.670000, 5.380000],
+        [50.645900, 5.443300]
+    ],
+    "22": [
+        [50.600000, 5.600000],
+        [50.620000, 5.520000],
+        [50.637300, 5.463500]
+    ]
+};
+
+function drawRunway(runway) {
+    if (!map) return;
+
+    if (runwayLayer) {
+        map.removeLayer(runwayLayer);
+        runwayLayer = null;
+    }
+
+    const r = RUNWAYS[runway];
+    if (!r) return;
+
+    runwayLayer = L.polyline([r.start, r.end], {
+        color: r.color,
+        weight: 6,
+        opacity: 0.9
+    }).addTo(map);
+}
+
+function drawCorridor(runway) {
+    if (!map) return;
+
+    if (corridorLayer) {
+        map.removeLayer(corridorLayer);
+        corridorLayer = null;
+    }
+    if (corridorArrows) {
+        map.removeLayer(corridorArrows);
+        corridorArrows = null;
+    }
+
+    const points = CORRIDORS[runway];
+    const r = RUNWAYS[runway];
+    if (!points || !r) return;
+
+    corridorLayer = L.polyline(points, {
+        color: r.color,
+        weight: 3,
+        opacity: 0.7
+    }).addTo(map);
+
+    corridorArrows = L.polylineDecorator(corridorLayer, {
+        patterns: [
+            {
+                offset: 20,
+                repeat: 40,
+                symbol: L.Symbol.arrowHead({
+                    pixelSize: 10,
+                    polygon: false,
+                    pathOptions: {
+                        stroke: true,
+                        color: r.color,
+                        weight: 2
+                    }
+                })
+            }
+        ]
+    }).addTo(map);
+}
+
+function getRunwayFromWind(windDir) {
+    if (windDir === undefined || windDir === null) return "UNKNOWN";
+
+    if (windDir >= 240 && windDir <= 300) return "22";
+    if (windDir >= 60 && windDir <= 120) return "04";
+
+    return "UNKNOWN";
+}
+
+function computeCrosswind(runway, windDir, windSpeed) {
+    if (!RUNWAYS[runway]) return null;
+    if (windDir === undefined || windDir === null || !windSpeed) return null;
+
+    const rwHeading = RUNWAYS[runway].heading;
+    let diff = Math.abs(windDir - rwHeading);
+    if (diff > 180) diff = 360 - diff;
+
+    const rad = diff * Math.PI / 180;
+    const cross = windSpeed * Math.sin(rad);
+
+    return {
+        crosswind: Math.round(cross),
+        angleDiff: Math.round(diff)
+    };
+}
+
+function updateRunwayPanel(runway, windDir, windSpeed) {
+    const panel = document.getElementById("runway-panel");
+    if (!panel) return;
+
+    if (runway === "UNKNOWN") {
+        panel.className = "runway-unknown";
+        panel.innerText = "Piste active : inconnue";
+        return;
+    }
+
+    const info = computeCrosswind(runway, windDir, windSpeed);
+    const r = RUNWAYS[runway];
+
+    panel.className = runway === "22" ? "runway-22" : "runway-04";
+
+    if (!info) {
+        panel.innerText = `Piste ${runway} (${r.heading}°) – vent: données insuffisantes`;
+        return;
+    }
+
+    panel.innerText =
+        `Piste ${runway} (${r.heading}°) – vent ${windDir}°/${windSpeed} kt – ` +
+        `crosswind ≈ ${info.crosswind} kt (Δ${info.angleDiff}°)`;
+}
+
+// ======================================================
+// SONOMÈTRES
+// ======================================================
+
+function getSonometerColor(runway) {
+    if (runway === "22") return "red";
+    if (runway === "04") return "blue";
+    return "gray";
+}
+
+function initSonometers(mapInstance) {
+    SONOS.forEach(s => {
+        const marker = L.circleMarker([s.lat, s.lon], {
+            radius: 6,
+            color: "gray",
+            fillColor: "gray",
+            fillOpacity: 0.9
+        }).addTo(mapInstance);
+
+        sonometers[s.id] = {
+            ...s,
+            marker,
+            status: "UNKNOWN"
+        };
+    });
+}
+
+function updateSonometers(runway) {
+    const color = getSonometerColor(runway);
+
+    Object.values(sonometers).forEach(s => {
+        s.marker.setStyle({
+            color,
+            fillColor: color
+        });
+        s.status = runway;
+    });
+}
+
+// ======================================================
 // METAR
 // ======================================================
 
@@ -92,44 +276,20 @@ function updateMetarUI(data) {
         updateSonometers("UNKNOWN");
         drawRunway("UNKNOWN");
         drawCorridor("UNKNOWN");
+        updateRunwayPanel("UNKNOWN", null, null);
         return;
     }
 
     el.innerText = data.raw;
 
     const windDir = data.wind_direction?.value;
+    const windSpeed = data.wind_speed?.value;
     const runway = getRunwayFromWind(windDir);
 
     updateSonometers(runway);
     drawRunway(runway);
     drawCorridor(runway);
-}
-
-function getRunwayFromWind(windDir) {
-    if (!windDir && windDir !== 0) return "UNKNOWN";
-
-    if (windDir >= 240 && windDir <= 300) return "22";
-    if (windDir >= 60 && windDir <= 120) return "04";
-
-    return "UNKNOWN";
-}
-
-function getSonometerColor(runway) {
-    if (runway === "22") return "red";
-    if (runway === "04") return "blue";
-    return "gray";
-}
-
-function updateSonometers(runway) {
-    const color = getSonometerColor(runway);
-
-    Object.values(sonometers).forEach(s => {
-        s.marker.setStyle({
-            color,
-            fillColor: color
-        });
-        s.status = runway;
-    });
+    updateRunwayPanel(runway, windDir, windSpeed);
 }
 
 // ======================================================
@@ -171,142 +331,37 @@ function updateFidsUI(data) {
         return;
     }
 
+    const flights = Array.isArray(data) ? data : [];
     container.innerHTML = "";
 
-    data.forEach(flight => {
-        const status = (flight.status || "").toLowerCase();
+    if (!flights.length) {
+        container.innerHTML = `<div class="fids-row fids-unknown">Aucun vol disponible</div>`;
+        return;
+    }
+
+    flights.forEach(flight => {
+        const statusText = (flight.status || "").toLowerCase();
 
         let cssClass = "fids-unknown";
-        if (status.includes("on time")) cssClass = "fids-on-time";
-        if (status.includes("delayed")) cssClass = "fids-delayed";
-        if (status.includes("cancel")) cssClass = "fids-cancelled";
-        if (status.includes("board")) cssClass = "fids-boarding";
+        if (statusText.includes("on time")) cssClass = "fids-on-time";
+        if (statusText.includes("delayed")) cssClass = "fids-delayed";
+        if (statusText.includes("cancel")) cssClass = "fids-cancelled";
+        if (statusText.includes("board")) cssClass = "fids-boarding";
 
         const row = document.createElement("div");
         row.className = `fids-row ${cssClass}`;
         row.innerHTML = `
-            <span>${flight.flight}</span>
-            <span>${flight.destination}</span>
-            <span>${flight.time}</span>
-            <span>${flight.status}</span>
+            <span>${flight.flight || "-"}</span>
+            <span>${flight.destination || "-"}</span>
+            <span>${flight.time || "-"}</span>
+            <span>${flight.status || "-"}</span>
         `;
         container.appendChild(row);
     });
 }
 
 // ======================================================
-// SONOMÈTRES (PLACEMENT SUR LA CARTE)
-// ======================================================
-
-function initSonometers(mapInstance) {
-    SONOS.forEach(s => {
-        const marker = L.circleMarker([s.lat, s.lon], {
-            radius: 6,
-            color: "gray",
-            fillColor: "gray",
-            fillOpacity: 0.9
-        }).addTo(mapInstance);
-
-        sonometers[s.id] = {
-            ...s,
-            marker,
-            status: "UNKNOWN"
-        };
-    });
-}
-
-// =========================
-// PISTES
-// =========================
-
-const RUNWAYS = {
-    "04": {
-        start: [50.645900, 5.443300],
-        end:   [50.637300, 5.463500],
-        color: "blue"
-    },
-    "22": {
-        start: [50.637300, 5.463500],
-        end:   [50.645900, 5.443300],
-        color: "red"
-    }
-};
-
-let runwayLayer = null;
-
-function drawRunway(runway) {
-    if (!map) return;
-
-    if (runwayLayer) {
-        map.removeLayer(runwayLayer);
-    }
-
-    const r = RUNWAYS[runway];
-    if (!r) return;
-
-    runwayLayer = L.polyline([r.start, r.end], {
-        color: r.color,
-        weight: 6,
-        opacity: 0.9
-    }).addTo(map);
-}
-
-// =========================
-// CORRIDORS
-// =========================
-
-let corridorLayer = null;
-let corridorArrows = null;
-
-const CORRIDORS = {
-    "04": [
-        [50.700000, 5.300000],
-        [50.670000, 5.380000],
-        [50.645900, 5.443300]
-    ],
-    "22": [
-        [50.600000, 5.600000],
-        [50.620000, 5.520000],
-        [50.637300, 5.463500]
-    ]
-};
-
-function drawCorridor(runway) {
-    if (!map) return;
-
-    if (corridorLayer) map.removeLayer(corridorLayer);
-    if (corridorArrows) map.removeLayer(corridorArrows);
-
-    const points = CORRIDORS[runway];
-    if (!points) return;
-
-    corridorLayer = L.polyline(points, {
-        color: RUNWAYS[runway].color,
-        weight: 3,
-        opacity: 0.7
-    }).addTo(map);
-
-    corridorArrows = L.polylineDecorator(corridorLayer, {
-        patterns: [
-            {
-                offset: 20,
-                repeat: 40,
-                symbol: L.Symbol.arrowHead({
-                    pixelSize: 10,
-                    polygon: false,
-                    pathOptions: {
-                        stroke: true,
-                        color: RUNWAYS[runway].color,
-                        weight: 2
-                    }
-                })
-            }
-        ]
-    }).addTo(map);
-}
-
-// ======================================================
-// CARTE (ADAPTE SI TU AS DÉJÀ TA PROPRE INIT)
+// CARTE
 // ======================================================
 
 function initMap() {
@@ -324,7 +379,7 @@ function initMap() {
 // ======================================================
 
 window.onload = () => {
-    initMap();      // si tu as déjà une carte, remplace par ton init et appelle initSonometers(map) dedans
+    initMap();
     loadMetar();
     loadTaf();
     loadFids();
