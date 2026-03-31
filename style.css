@@ -138,6 +138,29 @@
     border-bottom: 1px solid #ddd;
     padding-bottom: 3px;
 }
+#sono-panel {
+    font-size: 13px;
+    padding: 8px;
+    background: #f5f5f5;
+    border-radius: 4px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+#sono-panel h3 {
+    margin-top: 0;
+    font-size: 14px;
+}
+
+.sono-item {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 2px;
+}
+
+.sono-green { color: green; }
+.sono-red { color: red; }
+.sono-gray { color: #777; }
 
 /* ============================
    MAIN CONTENT
